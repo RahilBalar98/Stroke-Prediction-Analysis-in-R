@@ -1,0 +1,445 @@
+---
+title: "STAT 652 Final Project"
+author: "Dhruv Patel (dnp5@sfu.ca) & Rahil Lavkumar Balar (rlb4@sfu.ca) "
+date: "7/12/2021"
+output: pdf_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+library(knitr)
+library(ggplot2)
+library(corrplot)
+library(RColorBrewer)
+library(caret)
+library(glmnet)
+library(randomForest)
+library(dplyr)
+library(gbm)
+```
+
+## Introduction
+
+A stroke is a life-threatening medical disorder. It's a serious ailment, but if caught early enough, we may save a person's life and provide excellent care. There are several variables that might cause strokes, and we will attempt to investigate a few of them in this research using statistical learning in R. This is an analysis report of the Stroke Prediction Dataset. The dataset has 5110 rows and 12 columns. In this dataset, Our goal is to determine if a patient is at risk for stroke based on various factors such as gender, age, illness, and smoking status, etc. 
+
+## Predicting Stroke (Classification Analysis)
+
+## 1 Data
+
+### 1.1 Data Loading
+The first step is to load the appropriate dataset in R Studio environment using the read.csv command.
+
+```{r}
+data <- read.csv("healthcare-dataset-stroke-data.csv", stringsAsFactors = TRUE)
+summary(data)
+```
+
+From the summary of the Stroke Prediction Data, we can observe that there are total 12 columns. In addition, the summary shows that there are no NA or missing values in any columns except the bmi column.
+
+### 1.2 Exploratory Data Analysis
+
+#### Missing Data:
+\
+\
+To start with our data analysis, we notied that in the bmi column there are 201 entries with value "N/A". We can replace that with the actual NA values. As we have the luxury of data so we could simply remove the NA bmi records.
+
+```{r}
+data[data=="N/A"] <- NA
+data <- na.omit(data)
+```
+
+#### ID:
+\
+\
+The column id is not needed for prediction as it just states the unique id of each patient, so we can remove the id column from our data.
+
+```{r}
+data <- data[2:12]
+```
+
+#### Gender:
+\
+\
+The gender of the patient is indicated by this feature. Let's look at how gender influences stroke rates and compare stroke rates by gender.
+
+```{r, echo=FALSE, fig.width=4, fig.height=3, message=FALSE}
+dplyr::count(data, data$gender, sort = TRUE)
+
+gender.vals <- table(data$stroke, data$gender)
+rownames(gender.vals) <- c("Stroke 0","Stroke 1")
+colnames(gender.vals) <- c("Female","Male", "Other")
+
+barplot(gender.vals, main="Gender with Stroke", col=c("darkblue","red"),cex.axis = 0.7,legend = rownames(gender.vals), beside=TRUE)
+```
+
+The dataset appears to be unbalanced. As far as we can tell, there isn't much of a difference in stroke rates between men and women. Also there is only one value of other type gender, since it is not helping in predicting stroke (as it is only one data sample) we can remove the record having other as gender type.
+
+```{r}
+data <- data[!(data$gender=="Other"),]
+```
+
+#### Age:
+\
+\
+Analytically, age would play a huge role in deciding whether the person will suffer from stroke or not. Let us find how many unique values of age are there and what is the age distribution.
+
+```{r, echo=FALSE, fig.width=4, fig.height=3, message=FALSE}
+count.df <- dplyr::count(data, data$age, sort = TRUE)
+
+data$age<- as.numeric(as.character(data$age))
+
+nrow(count.df)
+
+ggplot(data, aes(x=age)) + geom_histogram(binwidth = 3, colour="black", fill="white")
+```
+
+```{r, echo=FALSE, fig.width=4, fig.height=3, message=FALSE}
+boxplot(data$age ~ data$stroke, main = "Age v/s Stroke", xlab = "stroke", ylab = "age")
+```
+
+As expected, we can see the mean age for people suffering from stroke is higher for older people than the younger ones.
+
+#### Hypertension:
+\
+\
+Hypertension is a condition in which a person's blood pressure is abnormally high. A stroke may occur as a result of hypertension which makes it one of the deciding factor to predict whether a person will suffer from stroke or not.
+
+```{r, echo=FALSE, fig.width=4, fig.height=3, message=FALSE}
+dplyr::count(data, data$hypertension, sort = TRUE)
+
+hypertension.vals <- table(data$stroke, data$hypertension)
+rownames(gender.vals) <- c("Stroke 0","Stroke 1")
+
+barplot(hypertension.vals, main="Hypertension with Stroke",xlab="Hypertension Value", col=c("darkblue","red"),cex.axis = 0.7, legend = rownames(hypertension.vals), beside=TRUE)
+```
+
+As we can see in our data plot, hypertension is uncommon in young adults but widespread in the elderly. A stroke can be caused by hypertension but the picture for hypertension is not as clear as it appears based on our statistics because our data provides very little information about hypertensive individuals.
+
+#### Heart Disease:
+\
+\
+People suffering from heart disease are more vulnerable towards stroke, if proper care is not taken. Let us find out how heart_disease and stroke are related    
+
+```{r, echo=FALSE, fig.width=4, fig.height=3, message=FALSE}
+dplyr::count(data, data$heart_disease, sort = TRUE)
+
+heart_disease.vals <- table(data$stroke, data$heart_disease)
+barplot(heart_disease.vals, main="Heart disease with Stroke", xlab="Heart Disease Value", col=c("darkblue","red"),cex.axis = 0.7,legend = rownames(heart_disease.vals), beside=TRUE)
+```
+
+The data is quite imbalanced for this feature, making it harder for us to assert a concrete assumption. But we think, heart disease would not play a deciding factor for stroke.
+
+
+#### Ever Married:
+\
+\
+This feature lets us know whether the patient was married or not. Let us check whether this feature affects the probability of having stroke.
+
+```{r, echo=FALSE, fig.width=5, fig.height=3, message=FALSE}
+dplyr::count(data, data$ever_married, sort = TRUE)
+
+ever_married.vals <- table(data$stroke, data$ever_married)
+barplot(ever_married.vals, main="Ever married with Stroke",xlab="Ever Married Value", col=c("darkblue","red"), cex.axis = 0.7,legend = rownames(ever_married.vals), beside=TRUE)
+```
+
+Statistically speaking, we can depict from the graphs that people who are married have a high chance of suffering from stroke.
+
+#### Work Type:
+\
+\
+This attribute contains information regarding the patient's work. Various kinds of work present different issues and obstacles, which might lead to feelings of enthusiasm, thrill, tension, and so on. Stress is bad for the health, so let's explore how it affects the chances of getting a stroke.
+
+```{r, echo=FALSE, fig.width=4, fig.height=3, message=FALSE}
+dplyr::count(data, data$work_type, sort = TRUE)
+
+work_type.vals <- table(data$stroke, data$work_type)
+barplot(work_type.vals, main="Work Type with Stroke"
+        , col=c("darkblue","red"), cex.axis = 0.7, cex.names = 0.7, las=2, legend = rownames(work_type.vals), cex = 0.5, beside=TRUE)
+```
+
+
+We can observe form the data that the people who are working in the private sector have the highest amount of risk of getting a stroke, whereas people who have never worked have the least amount of risk. Other categories have some what similar amount of risk of getting a stroke.
+
+#### Residence Type:
+\
+\
+This attribute lets us know whether the person lives in an Urban residence or a Rural residence.
+
+```{r, echo=FALSE, fig.width=5, fig.height=3, message=FALSE}
+dplyr::count(data, data$Residence_type, sort = TRUE)
+
+Residence_type.vals <- table(data$stroke, data$Residence_type)
+barplot(Residence_type.vals, main="Residence Type with Stroke", col=c("darkblue","red"), cex.axis = 0.7, cex.names = 0.7, legend = rownames(Residence_type.vals), cex = 0.5, beside=TRUE)
+```
+
+After observing the plots we can see this attribute is showing similar trends in both Urban and Rural values, so we can disregard this variable when we predict the chances of Stroke.
+
+#### Average Glucose Level:
+\
+\
+This attribute lets us know about the average glucose level of the patient's body. Let us find how many unique values of average glucose level are there and what is the average glucose level distribution.
+
+```{r, echo=FALSE, fig.width=4, fig.height=3, message=FALSE}
+count.df <- dplyr::count(data, data$avg_glucose_level, sort = TRUE)
+nrow(count.df)
+
+data$avg_glucose_level<- as.numeric(as.character(data$avg_glucose_level))
+
+ggplot(data, aes(x=avg_glucose_level)) + geom_histogram(binwidth = 5, colour="black", fill="white")
+```
+
+```{r, echo=FALSE, fig.width=4, fig.height=3, message=FALSE}
+boxplot(data$avg_glucose_level ~ data$stroke, main = "Average Glucose Level v/s Stroke", xlab = "stroke", ylab = "avg_glucose_level")
+```
+
+We can see from the graph above that persons who have a stroke have a glucose level of more than 100. Although there are some evident outliers in people who have not had a stroke, which assures that these are authentic data.
+
+#### BMI:
+\
+\
+The BMI is a calculation based on a person's weight and height. The BMI is calculated by dividing the body mass by the square of the body height.
+
+```{r, echo=FALSE, fig.width=4, fig.height=3, message=FALSE}
+count.df <- dplyr::count(data, data$bmi, sort = TRUE)
+nrow(count.df)
+data$bmi<- as.numeric(as.character(data$bmi))
+
+ggplot(data, aes(x=bmi)) + geom_histogram(binwidth = 5, colour="black", fill="white")
+```
+
+```{r, echo=FALSE, fig.width=4, fig.height=3, message=FALSE}
+boxplot(data$bmi ~ data$stroke, main = "BMI v/s Stroke", xlab = "stroke", ylab = "bmi")
+```
+
+The boxplots does not provide a concrete evidence that can differentiate the patient's bmi relation with the stroke prediction, as both boxplots have similar trend.
+
+#### Smoking Status:
+\
+\
+We do have the prior knowledge that smoking can be a deciding factor for predicting that the patient will suffer from stroke or not. As, smokers tend to have a larger risk of experiencing stroke than a non-smoker patient.
+
+```{r, echo=FALSE, fig.width=8, fig.height=4, message=FALSE}
+dplyr::count(data, data$smoking_status, sort = TRUE)
+
+smoking_status.vals <- table(data$stroke, data$smoking_status)
+barplot(smoking_status.vals, main="Work Type with Stroke", col=c("darkblue","red"), cex.axis = 0.7, cex.names = 0.7, las=2, legend = rownames(smoking_status.vals), cex = 0.5, beside=TRUE)
+```
+
+
+After observing the plots, there is no discernible amount of difference between the various smoking_status categories.
+
+#### Stroke:
+\
+\
+This is our target variable, which determines whether the patient will not suffer or will suffer from stroke. 0 means not affecting from stroke and 1 means affecting from stroke.
+
+```{r, echo=FALSE, fig.width=4, fig.height=3, message=FALSE}
+dplyr::count(data, data$stroke, sort = TRUE)
+```
+
+### 1.3 Feature Engineering
+
+Intuitively we now how the individual factors affect the probability of a person suffering from stroke or not but statistically we would like to find the correlation between various explanatory variables with themselves and with stroke, so we used corrplot() function to plot out the different correlations within the variables, and find out the important variables. Then by implementing various ML algorithms we can prove our hypothesis and check whether our results justify the correlation plot.
+
+```{r}
+data$gender <- as.numeric(factor(data$gender))
+data$ever_married <- as.numeric(factor(data$ever_married))
+data$work_type <- as.numeric(factor(data$work_type))
+data$Residence_type <- as.numeric(factor(data$Residence_type))
+data$bmi<- as.numeric(factor(data$bmi))
+data$smoking_status <- as.numeric(factor(data$smoking_status))
+data$heart_disease <- as.numeric(factor(data$heart_disease))
+data$hypertension <- as.numeric(factor(data$hypertension))
+```
+
+```{r}
+corrplot(cor(data),type="upper", order="hclust", col=brewer.pal(n=8, name="RdYlBu"))
+```
+
+As from the above correlation plot we can observe that, stroke and age have the highest amount of positive correlation i.e. as age increases chances of suffering from stroke increases whereas, stroke and smoking status have the highest amount of negative correlation i.e. the chances of stroke decreases if the patient never smokes.
+
+### 1.4 Handling Categorical Variables
+
+Now, we should convert the numeric variables (categorical variables which we converted to numeric for plotting the correlation plot) into factor variables, as that is how we treat categorical variables in R because ML algorithms do not understand it, they only understand numeric variables and categorical variables expressed as factors.
+
+```{r}
+data$gender <- factor(data$gender)
+data$ever_married <- factor(data$ever_married)
+data$work_type <- factor(data$work_type)
+data$Residence_type <- factor(data$Residence_type)
+data$smoking_status <- factor(data$smoking_status)
+data$heart_disease <- factor(data$heart_disease)
+data$hypertension <- factor(data$hypertension)
+data$stroke <- factor(data$stroke)
+```
+
+### 1.5 Data Splitting
+
+Here we are splitting our data into two parts i.e. training and testing set. We are implementing a 75:25 split where 75% of the data is put into training set and the rest 25% is put into testing set. We are keeping our seed as 2021.
+
+```{r}
+n = nrow(data)
+set.seed(2021)
+new.order = sample.int(n)
+size.train = floor(n*0.75)
+ind.train = new.order[1:size.train]
+ind.test = new.order[(size.train + 1):n]
+data.train = data[ind.train, ]
+data.test = data[ind.test, ]
+```
+
+## 2 Methods
+
+### 2.1 Logistic Regression
+
+```{r, fig.width=4, fig.height=3}
+logreg1=glm(stroke~., data=data.train, family = "binomial")
+summary(logreg1)
+```
+We can observe that the p value for age, hypertension, and average_glucose_level are highly significant and they play a higher role in predicting stroke than other variables. 
+
+Now, let us try another logistics regression model, with the variables classified as important by the first logistics regression model. Then compare the two models by doing ANOVA Test.
+
+```{r, fig.width=4, fig.height=3}
+logreg2=glm(stroke~age+avg_glucose_level+hypertension, data=data.train, family = "binomial")
+summary(logreg2)
+```
+
+```{r, fig.width=4, fig.height=3}
+anova(logreg2,logreg1,test='LR')
+```
+
+We can observe that the model having the subset of variables is better than the complex model having all the variables. As, the P value for the complex model is high, and it is common practice that if a simple model is more computationally efficient or equivalently efficient, we should select that model.
+
+### 2.2 Random Forest
+
+```{r}
+rf1 = randomForest(stroke~., data.train, importance=TRUE, proximity = TRUE);
+
+#Confusion Matrix
+rf1
+
+varImpPlot(rf1)
+```
+
+Here, we are observing the Mean Decrease in Accuracy method to find the variable importance in Random Forest.
+
+We can see age, ever_married, hypertension, and bmi are the most important variables in predicting the stroke which was evident in the correlation plot too.
+
+```{r, fig.width=4, fig.height=3}
+#Training Error and Confusion Matrix
+H=predict(rf1, data.train)
+mean(H != data.train$stroke)
+table(H, data.train$stroke)
+```
+
+We calculate the training accuracy by dividing the sum of True Positives and True Negatives by summation of all four terms mentioned in the confusion matrix, which turns out to be 99%.
+
+```{r, fig.width=4, fig.height=3}
+#Test Error and Confusion Matrix
+H=predict(rf1, data.test)
+mean(H != data.test$stroke)
+table(H, data.test$stroke)
+```
+
+Similarly we can calculate the testing accuracy, which turns out to be 95%.
+
+By looking at the confusion matrix we can tell the random forest model performs very well for the training data. But for testing data we can tell the model does not do a good job (as compared to training), as number of false negatives are way more which hampers our accuracy. Let us try different parameters for mtry and nidesize and the select the optimum combination and try to fit the random forest.
+
+### Optimizing RF
+
+```{r, fig.width=4, fig.height=3}
+NT=1:10
+MT=1:10
+NDT=1:50
+MinError=1
+MinNT=0
+minNDT=0
+minMT=0
+
+for(nt in NT){
+  for(mt in MT){
+    for(ndt in NDT){
+      rf2 = randomForest(stroke~., type="classification", data.train, ntree=nt, mtry=mt, nodesize=ndt, importance=TRUE)
+      H=predict(rf2, data.train)
+      Error=mean(H != data.train$stroke)
+      if(Error < MinError){
+        MinError=Error
+        minNT=nt
+        minNDT=ndt
+        minMT=mt
+        #print(c("NT=",nt," MT=",mt," NDT=",ndt," minE=",MinError))
+      }
+    }
+  }
+
+}
+print(c("NT=",minNT," MT=",minMT," NDT=",minNDT," minE=",MinError))
+```
+
+```{r}
+rf3 = randomForest(stroke~., type="classification", data.train, ntree=minNT, mtry=minMT, nodesize=minNDT, importance=TRUE)
+
+rf3
+varImpPlot(rf3)
+```
+
+As expected we got age, ever_married as the important variables but surprisingly we got gender and work_type as the important variables as well.
+Let us find the confusion matrix for this random forest fit on training and testing data.
+
+```{r, fig.width=4, fig.height=3}
+#Training Error and Confusion Matrix
+H=predict(rf3, data.train)
+mean(H != data.train$stroke)
+table(H, data.train$stroke)
+```
+
+Similar to the method mentioned above in rf1 we can calculate the training accuracy for rf3 model which turns out to be 99%
+
+```{r, fig.width=4, fig.height=3}
+#Test Error and Confusion Matrix
+H=predict(rf3, data.test)
+mean(H != data.test$stroke)
+table(H, data.test$stroke)
+```
+
+The testing accuracy turns out to be 95% which is same as the one we got in rf1. The reason for this could be small number of test set and train set. Here we can explore another ensemble learning approach known as boosting which uses a completely different technique than the technique used in random forest.
+
+### 2.3 Boosting
+
+```{r, fig.width=4, fig.height=3}
+gbm.CVA <- gbm(stroke~., data=data.train, distribution = 'adaboost', n.trees = 5000, shrinkage = 0.01, interaction.depth = 3, cv.folds = 10)
+
+perf_gbm1 = gbm.perf(gbm.CVA, method="cv")
+```
+
+```{r, fig.show='hide'}
+summary(gbm.CVA)
+```
+
+In boosting, we can concur our results that age, hypertension, ever_married are the important variables in predicting stroke.
+\
+\
+Let us check the training and testing accuracy on the boosting model.
+
+```{r, fig.width=4, fig.height=3}
+## Training error
+y1=data.train$stroke
+pred1gbm <- predict(gbm.CVA,newdata = data.train, n.trees=perf_gbm1, type="response")
+y1hat <- ifelse(pred1gbm < 0.5, 0, 1)
+sum(y1hat != y1)/length(y1) 
+```
+
+```{r, fig.width=4, fig.height=3}
+## Testing error
+y2=data.test$stroke
+y2hat <- ifelse(predict(gbm.CVA,newdata = data.test,
+n.trees=perf_gbm1, type="response") < 0.5, 0, 1)
+mean(y2hat != y2) 
+```
+
+We can observe a good training accuracy of 96% and testing accuracy of 95.1% which is a little bit better than the rf accuracy.
+
+## 3 Conclusion & Discussion
+
+We looked at some of the elements that might lead to stroke in our project. Age was significantly associated, followed by hypertension, heart_disease, avg_glucose_level, and whether or not they had ever married. There were certain outliers in the prediction too. As, even though a person's BMI is high, he or she will not have a stroke if they are young and have no heart problems. So boosting works very well in such kind of scenarios as it makes smaller simpler trees which relate the explanatory variables in a more granular level, which benefits in prediction. Furthermore we can try using more sophisticated models, such as deep neural networks, to see if it improves our results. Finally, all of these arguments are predicated on the dataset we were given. The accuracy of this model will alter when additional data becomes available in the future, so we may need to fine-tune it later.
